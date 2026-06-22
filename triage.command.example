@@ -1,0 +1,47 @@
+#!/bin/bash
+#
+# triage.command.example - double-click launcher for ERGO note-intake.
+#
+# Setup:
+#   cp triage.command.example triage.command
+#   chmod +x triage.command
+#   # then edit INGEST_SRC below to point at your capture folder
+#
+# Pulls new notes from your capture folder into the local inbox, then starts
+# the triage server (if it isn't already up) and opens the page. Close the
+# window to stop it.
+
+# ERGO root = the folder this launcher lives in (self-locating; nothing to edit).
+ERGO="$(cd "$(dirname "$0")" && pwd)"; export ERGO
+
+# ===== EDIT: your capture folder (where the iOS Shortcut writes notes) =====
+export INGEST_SRC="${INGEST_SRC:-$HOME/Library/Mobile Documents/iCloud~is~workflow~my~workflows/Documents/ergo}"
+# ==========================================================================
+
+cd "$ERGO" || { echo "Couldn't find $ERGO"; read -r; exit 1; }
+
+for f in ingest.py triage_ui.py triage.py; do
+  [ -f "$f" ] || { echo "$f isn't next to this launcher."; read -r; exit 1; }
+done
+
+# Prefer a project venv; fall back to system python3.
+if [ -x "$ERGO/.venv/bin/python" ]; then PY="$ERGO/.venv/bin/python"; else PY="python3"; fi
+
+URL="http://localhost:8788"
+
+echo "Pulling new notes..."
+"$PY" ingest.py
+
+if curl -s --max-time 1 -o /dev/null "$URL"; then
+  echo "Triage already running - opening the page (reload to see new notes)."
+  open "$URL"; exit 0
+fi
+
+( for _ in $(seq 1 20); do
+    curl -s --max-time 1 -o /dev/null "$URL" && break
+    sleep 0.3
+  done
+  open "$URL" ) &
+
+echo "Starting triage...  (close this window to stop it)"
+exec "$PY" triage_ui.py

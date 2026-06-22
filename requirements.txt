@@ -1,0 +1,4 @@
+# Needed only by the servers (note_capture.py, triage_ui.py).
+# ingest.py and triage.py are standard-library only.
+fastapi
+uvicorn

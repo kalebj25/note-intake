@@ -1,0 +1,21 @@
+# --- Personal data: notes and decisions. Never commit. ---
+inbox/
+projects/
+vault/
+reference/
+archive/
+triage_log.jsonl
+active.txt
+
+# --- Local config / launcher with machine-specific paths ---
+# (commit triage.command.example instead)
+triage.command
+
+# --- Python environment ---
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# --- macOS ---
+.DS_Store

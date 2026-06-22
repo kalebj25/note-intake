@@ -82,12 +82,14 @@ def _log(note_id, decision, project):
         f.write(json.dumps(rec) + "\n")
 
 
-def route_note(path, decision, project=None, tags=None):
-    """Apply a triage decision: mutate frontmatter (and tags if given), move the file, log it."""
+def route_note(path, decision, project=None, tags=None, cites=None):
+    """Apply a triage decision: mutate frontmatter (tags/cites if given), move the file, log it."""
     path = Path(path)
     meta, body = parse_frontmatter(path.read_text())
     if tags is not None:
         meta["tags"] = "[" + ", ".join(t.strip() for t in tags if t.strip()) + "]"
+    if cites is not None and (any(c.strip() for c in cites) or "cites" in meta):
+        meta["cites"] = "[" + ", ".join(c.strip() for c in cites if c.strip()) + "]"
     if decision == "project":
         slug = slugify(project)
         dest_dir, meta["status"], meta["project"] = ERGO / "projects" / slug, "linked", slug

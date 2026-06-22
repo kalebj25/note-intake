@@ -17,6 +17,7 @@ Run
     # then open http://localhost:8788
 """
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -27,6 +28,14 @@ import triage  # reuse the core: untriaged(), route_note(), load_active(), parse
 
 app = FastAPI(title="ERGO triage")
 VALID = ("project", "vault", "reference", "archive")
+SOURCES = Path(os.path.expanduser(os.getenv("SOURCES", str(triage.ERGO / "sources"))))
+
+
+def _parse_list(raw):
+    s = (raw or "").strip()
+    if s.startswith("[") and s.endswith("]"):
+        s = s[1:-1]
+    return [x.strip().strip('"') for x in s.split(",") if x.strip()]
 
 
 class Decision(BaseModel):
@@ -34,6 +43,7 @@ class Decision(BaseModel):
     decision: str
     project: str | None = None
     tags: list[str] = []
+    cites: list[str] = []
 
 
 def _safe(path_str: str) -> Path:
@@ -54,6 +64,7 @@ def inbox():
             "created": meta.get("created", ""),
             "source": meta.get("source", ""),
             "tags": meta.get("tags", "[]"),
+            "cites": _parse_list(meta.get("cites")),
             "body": body.strip(),
         })
     return {"notes": notes, "total": len(notes)}
@@ -62,6 +73,16 @@ def inbox():
 @app.get("/api/projects")
 def projects():
     return {"projects": triage.load_active()}
+
+
+@app.get("/api/sources")
+def sources():
+    out = []
+    if SOURCES.exists():
+        for p in sorted(SOURCES.glob("*.md")):
+            meta, _ = triage.parse_frontmatter(p.read_text())
+            out.append({"id": meta.get("id", p.stem), "title": (meta.get("title", "") or "").strip('"')})
+    return {"sources": out}
 
 
 @app.post("/api/triage")
@@ -73,7 +94,7 @@ def do_triage(d: Decision):
     p = _safe(d.path)
     if not p.exists():
         raise HTTPException(404, "that note is no longer in the inbox")
-    dest = triage.route_note(p, d.decision, (d.project or None), (d.tags or None))
+    dest = triage.route_note(p, d.decision, (d.project or None), (d.tags or None), d.cites)
     return {"ok": True, "dest": str(dest), "remaining": len(triage.untriaged())}
 
 
@@ -131,6 +152,15 @@ PAGE = """<!doctype html>
   .err{color:var(--warn);font-size:13px;font-family:var(--mono);min-height:16px;margin-top:2px}
   .empty{text-align:center;padding:48px 16px;color:var(--muted)}
   .empty .big{font-size:20px;color:var(--ink);margin-bottom:6px}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:#eaf3ee;border:1px solid #cfe6da;border-radius:14px;padding:3px 10px;font-size:13px;color:var(--accent)}
+  .chip button{background:none;border:none;color:var(--accent);cursor:pointer;font-size:15px;padding:0;line-height:1;font-weight:400}
+  .cite-results{border:1px solid var(--line);border-radius:9px;margin-top:6px;max-height:170px;overflow:auto}
+  .cite-results.hide{display:none}
+  .cite-results .r{padding:9px 11px;cursor:pointer;border-bottom:1px solid var(--line)}
+  .cite-results .r:last-child{border-bottom:none}
+  .cite-results .r:hover{background:var(--paper)}
+  .cite-results .r .k{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
   @media (prefers-reduced-motion:reduce){.card{transition:none}}
 </style>
 </head>
@@ -164,6 +194,12 @@ PAGE = """<!doctype html>
         <label for="tags">Tags <span style="text-transform:none;letter-spacing:0">(comma separated, optional)</span></label>
         <input id="tags" placeholder="render, idea" autocomplete="off">
       </div>
+      <div>
+        <label for="citeSearch">Link sources <span style="text-transform:none;letter-spacing:0">(cites, optional)</span></label>
+        <div id="citeChips" class="chips"></div>
+        <input id="citeSearch" placeholder="search your sources" autocomplete="off">
+        <div id="citeResults" class="cite-results hide"></div>
+      </div>
       <div class="err" id="err"></div>
       <div class="actions">
         <button class="route" id="route">Route note</button>
@@ -179,12 +215,13 @@ PAGE = """<!doctype html>
 </div>
 
 <script>
-let notes = [], idx = 0, projects = [];
+let notes = [], idx = 0, projects = [], allSources = [], selectedCites = [];
 const $ = id => document.getElementById(id);
 const NEW = "__new__";
 
 async function load(){
   projects = (await (await fetch("/api/projects")).json()).projects;
+  allSources = (await (await fetch("/api/sources")).json()).sources;
   notes = (await (await fetch("/api/inbox")).json()).notes;
   fillProjects();
   idx = 0; render();
@@ -219,6 +256,9 @@ function render(){
   $("tags").value = stripTags(n.tags);
   $("newProject").value = "";
   $("err").textContent = "";
+  selectedCites = (n.cites || []).slice();
+  renderChips();
+  $("citeSearch").value = ""; $("citeResults").classList.add("hide");
   syncRows();
 }
 
@@ -227,6 +267,40 @@ function syncRows(){
   $("projectRow").classList.toggle("hide", dest !== "project");
   const isNew = dest === "project" && $("project").value === NEW;
   $("newRow").classList.toggle("hide", !isNew);
+}
+
+function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function citeTitle(id){
+  const s = allSources.find(x => x.id === id);
+  return s && s.title ? s.title : id;
+}
+
+function renderChips(){
+  const box = $("citeChips"); box.innerHTML = "";
+  selectedCites.forEach(id => {
+    const c = document.createElement("span"); c.className = "chip"; c.textContent = citeTitle(id);
+    const b = document.createElement("button"); b.type = "button"; b.textContent = "\u00d7"; b.setAttribute("aria-label", "remove");
+    b.onclick = () => { selectedCites = selectedCites.filter(x => x !== id); renderChips(); };
+    c.appendChild(b); box.appendChild(c);
+  });
+}
+
+function searchCites(){
+  const q = $("citeSearch").value.trim().toLowerCase();
+  const res = $("citeResults");
+  const hits = !q ? [] : allSources.filter(s =>
+    !selectedCites.includes(s.id) &&
+    ((s.title || "").toLowerCase().includes(q) || s.id.toLowerCase().includes(q))
+  ).slice(0, 8);
+  if (!hits.length){ res.classList.add("hide"); res.innerHTML = ""; return; }
+  res.innerHTML = ""; res.classList.remove("hide");
+  hits.forEach(s => {
+    const r = document.createElement("div"); r.className = "r";
+    r.innerHTML = esc(s.title || s.id) + '<div class="k">' + esc(s.id) + '</div>';
+    r.onclick = () => { selectedCites.push(s.id); renderChips(); $("citeSearch").value = ""; res.classList.add("hide"); res.innerHTML = ""; };
+    res.appendChild(r);
+  });
 }
 
 async function route(){
@@ -239,7 +313,7 @@ async function route(){
   const tags = $("tags").value.split(",").map(t => t.trim()).filter(Boolean);
   const res = await fetch("/api/triage", {
     method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ path:n.path, decision:dest, project, tags })
+    body: JSON.stringify({ path:n.path, decision:dest, project, tags, cites:selectedCites })
   });
   if (!res.ok){ $("err").textContent = (await res.json()).detail || "Couldn't route that one."; return; }
   if (dest === "project" && project && !projects.includes(project)){
@@ -248,6 +322,7 @@ async function route(){
   idx++; render();
 }
 
+$("citeSearch").addEventListener("input", searchCites);
 $("dest").addEventListener("change", syncRows);
 $("project").addEventListener("change", syncRows);
 $("route").addEventListener("click", route);

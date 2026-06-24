@@ -72,7 +72,15 @@ def inbox():
 
 @app.get("/api/projects")
 def projects():
-    return {"projects": triage.load_active()}
+    active = triage.load_active()
+    seen = set(active)
+    others = []
+    pdir = triage.ERGO / "projects"
+    if pdir.exists():
+        for d in sorted(pdir.iterdir()):
+            if d.is_dir() and d.name not in seen:
+                others.append(d.name)
+    return {"active": active, "others": others}
 
 
 @app.get("/api/sources")
@@ -109,65 +117,76 @@ PAGE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>ERGO Triage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Manrope:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
   :root{
-    --paper:#f1f3f1; --card:#ffffff; --ink:#1b211e; --muted:#767c77;
-    --line:#e2e5e1; --accent:#1f5e4f; --accent-press:#184d41; --warn:#9a3b2f;
-    --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
-    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    --ground:#1a1612; --surface-1:#221d18; --surface-2:#2a241e; --surface-3:#332b23;
+    --text-primary:#f5f1ea; --text-secondary:#a39c8f; --text-tertiary:#6b6558; --text-quaternary:#4a4538;
+    --border-subtle:rgba(245,241,234,.06); --border-medium:rgba(245,241,234,.12);
+    --amber:#EF9F27; --amber-text:#FAC775; --amber-dim:rgba(239,159,39,.12);
+    --font-display:'Fraunces',Georgia,serif;
+    --font-body:'Manrope',-apple-system,BlinkMacSystemFont,sans-serif;
+    --font-mono:'Commit Mono','JetBrains Mono',ui-monospace,'SF Mono',Menlo,monospace;
   }
-  *{box-sizing:border-box}
-  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
-       display:flex;justify-content:center;padding:40px 20px;min-height:100vh}
-  .wrap{width:100%;max-width:560px}
-  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.18em;
-           text-transform:uppercase;color:var(--muted)}
-  h1{font-size:26px;font-weight:600;margin:4px 0 28px;letter-spacing:-.01em}
-  h1 .count{color:var(--accent)}
-  .card{background:var(--card);border:1px solid var(--line);border-radius:13px;
-        padding:22px;box-shadow:0 1px 2px rgba(0,0,0,.04);
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--ground);color:var(--text-primary);font-family:var(--font-body);
+       line-height:1.6;-webkit-font-smoothing:antialiased;display:flex;justify-content:center;
+       padding:48px 20px 80px;min-height:100vh}
+  .wrap{width:100%;max-width:600px}
+  .brand-mark{font-family:var(--font-display);font-weight:500;font-size:26px;letter-spacing:-.02em;
+              display:flex;align-items:baseline;gap:8px}
+  .brand-dots{display:inline-flex;gap:3px;transform:translateY(-2px)}
+  .brand-dots span{width:5px;height:5px;border-radius:50%;background:var(--amber);display:block}
+  .brand-tag{font-family:var(--font-mono);font-size:10.5px;color:var(--text-tertiary);
+             letter-spacing:.12em;text-transform:uppercase;margin:9px 0 30px}
+  .brand-tag .count{color:var(--amber-text)}
+  .card{background:var(--surface-1);border:.5px solid var(--border-subtle);border-radius:14px;padding:24px;
         transition:opacity .18s ease, transform .18s ease}
   .card.swap{opacity:0;transform:translateY(6px)}
-  .meta{font-family:var(--mono);font-size:12px;color:var(--muted);
-        padding-bottom:14px;border-bottom:1px solid var(--line);
-        display:flex;gap:12px;flex-wrap:wrap}
-  .body{font-size:17px;line-height:1.6;white-space:pre-wrap;margin:16px 0 4px;
-        word-break:break-word}
-  .controls{margin-top:22px;display:flex;flex-direction:column;gap:16px}
-  label{font-family:var(--mono);font-size:11px;letter-spacing:.12em;
-        text-transform:uppercase;color:var(--muted);display:block;margin-bottom:6px}
-  select,input{width:100%;font-family:var(--sans);font-size:15px;color:var(--ink);
-        background:var(--card);border:1px solid var(--line);border-radius:9px;
-        padding:11px 12px;appearance:none}
-  select:focus,input:focus{outline:2px solid var(--accent);outline-offset:1px;border-color:transparent}
+  .meta{font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);
+        padding-bottom:14px;border-bottom:.5px solid var(--border-subtle);display:flex;gap:14px;flex-wrap:wrap}
+  .body{font-size:16px;line-height:1.7;white-space:pre-wrap;margin:16px 0 4px;
+        word-break:break-word;color:var(--text-primary)}
+  .controls{margin-top:24px;display:flex;flex-direction:column;gap:16px}
+  label{font-family:var(--font-mono);font-size:10px;letter-spacing:.14em;
+        text-transform:uppercase;color:var(--text-tertiary);display:block;margin-bottom:7px}
+  select,input{width:100%;font-family:var(--font-body);font-size:15px;color:var(--text-primary);
+        background:var(--surface-1);border:.5px solid var(--border-subtle);border-radius:9px;
+        padding:12px 13px;appearance:none}
+  select:focus,input:focus{outline:none;border-color:var(--border-medium)}
+  input::placeholder{color:var(--text-tertiary)}
   .row.hide{display:none}
   .actions{display:flex;gap:10px;margin-top:6px}
-  button{font-family:var(--sans);font-size:15px;font-weight:550;border-radius:9px;
-        padding:12px 18px;cursor:pointer;border:1px solid transparent}
-  .route{background:var(--accent);color:#fff;flex:1}
-  .route:hover{background:var(--accent-press)}
-  .skip{background:transparent;color:var(--muted);border-color:var(--line)}
-  .skip:hover{color:var(--ink)}
-  button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-  .err{color:var(--warn);font-size:13px;font-family:var(--mono);min-height:16px;margin-top:2px}
-  .empty{text-align:center;padding:48px 16px;color:var(--muted)}
-  .empty .big{font-size:20px;color:var(--ink);margin-bottom:6px}
+  button{font-family:var(--font-body);font-size:15px;font-weight:500;border-radius:9px;
+        padding:12px 18px;cursor:pointer;border:.5px solid transparent}
+  .route{background:var(--amber-dim);color:var(--amber-text);border-color:rgba(239,159,39,.25);flex:1}
+  .route:hover{background:rgba(239,159,39,.18)}
+  .skip{background:transparent;color:var(--text-tertiary);border-color:var(--border-subtle)}
+  .skip:hover{color:var(--text-secondary);border-color:var(--border-medium)}
+  button:focus-visible{outline:2px solid var(--amber);outline-offset:2px}
+  .err{color:#d68a63;font-size:12px;font-family:var(--font-mono);min-height:16px;margin-top:2px}
+  .empty{text-align:center;padding:64px 16px;color:var(--text-tertiary);
+         font-family:var(--font-display);font-style:italic;font-size:18px}
+  .empty .big{font-size:22px;color:var(--text-primary);margin-bottom:6px;font-style:normal}
   .chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
-  .chip{display:inline-flex;align-items:center;gap:6px;background:#eaf3ee;border:1px solid #cfe6da;border-radius:14px;padding:3px 10px;font-size:13px;color:var(--accent)}
-  .chip button{background:none;border:none;color:var(--accent);cursor:pointer;font-size:15px;padding:0;line-height:1;font-weight:400}
-  .cite-results{border:1px solid var(--line);border-radius:9px;margin-top:6px;max-height:170px;overflow:auto}
+  .chip{display:inline-flex;align-items:center;gap:6px;background:var(--amber-dim);border:.5px solid var(--border-subtle);
+        border-radius:14px;padding:3px 10px;font-size:12px;color:var(--amber-text);font-family:var(--font-mono)}
+  .chip button{background:none;border:none;color:var(--amber-text);cursor:pointer;font-size:14px;padding:0;line-height:1;font-weight:400}
+  .cite-results{border:.5px solid var(--border-subtle);border-radius:9px;margin-top:6px;max-height:170px;overflow:auto;background:var(--surface-2)}
   .cite-results.hide{display:none}
-  .cite-results .r{padding:9px 11px;cursor:pointer;border-bottom:1px solid var(--line)}
+  .cite-results .r{padding:9px 11px;cursor:pointer;border-bottom:.5px solid var(--border-subtle)}
   .cite-results .r:last-child{border-bottom:none}
-  .cite-results .r:hover{background:var(--paper)}
-  .cite-results .r .k{font-family:var(--mono);font-size:11px;color:var(--muted);margin-top:2px}
+  .cite-results .r:hover{background:var(--surface-3)}
+  .cite-results .r .k{font-family:var(--font-mono);font-size:11px;color:var(--text-tertiary);margin-top:2px}
   @media (prefers-reduced-motion:reduce){.card{transition:none}}
 </style>
 </head>
 <body>
 <div class="wrap">
-  <div class="eyebrow">ERGO &middot; Triage</div>
-  <h1><span class="count" id="count">&hellip;</span> to clear</h1>
+  <div class="brand-mark">ERGO <span class="brand-dots"><span></span><span></span><span></span></span></div>
+  <div class="brand-tag">Triage &middot; <span class="count" id="count">&hellip;</span> to clear</div>
 
   <div id="card" class="card" hidden>
     <div class="meta" id="meta"></div>
@@ -215,12 +234,12 @@ PAGE = """<!doctype html>
 </div>
 
 <script>
-let notes = [], idx = 0, projects = [], allSources = [], selectedCites = [];
+let notes = [], idx = 0, projData = {active:[], others:[]}, allSources = [], selectedCites = [];
 const $ = id => document.getElementById(id);
 const NEW = "__new__";
 
 async function load(){
-  projects = (await (await fetch("/api/projects")).json()).projects;
+  projData = await (await fetch("/api/projects")).json();
   allSources = (await (await fetch("/api/sources")).json()).sources;
   notes = (await (await fetch("/api/inbox")).json()).notes;
   fillProjects();
@@ -230,7 +249,16 @@ async function load(){
 function fillProjects(){
   const sel = $("project");
   sel.innerHTML = "";
-  projects.forEach(p => sel.add(new Option(p, p)));
+  if (projData.active.length){
+    const g = document.createElement("optgroup"); g.label = "Active";
+    projData.active.forEach(p => g.appendChild(new Option(p, p)));
+    sel.add(g);
+  }
+  if (projData.others.length){
+    const g = document.createElement("optgroup"); g.label = "Other projects";
+    projData.others.forEach(p => g.appendChild(new Option(p, p)));
+    sel.add(g);
+  }
   sel.add(new Option("+ New project\u2026", NEW));
 }
 
@@ -316,8 +344,9 @@ async function route(){
     body: JSON.stringify({ path:n.path, decision:dest, project, tags, cites:selectedCites })
   });
   if (!res.ok){ $("err").textContent = (await res.json()).detail || "Couldn't route that one."; return; }
-  if (dest === "project" && project && !projects.includes(project)){
-    projects.push(project); fillProjects();
+  const known = [...projData.active, ...projData.others];
+  if (dest === "project" && project && !known.includes(project)){
+    projData = await (await fetch("/api/projects")).json(); fillProjects();
   }
   idx++; render();
 }

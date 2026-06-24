@@ -35,7 +35,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-ERGO = Path(os.path.expanduser(os.getenv("ERGO", "~/ergo")))
+ERGO = Path(os.path.expanduser(os.getenv("ERGO", str(Path(__file__).resolve().parent))))
 INBOX = Path(os.path.expanduser(os.getenv("INBOX", str(ERGO / "inbox"))))
 LOG = ERGO / "triage_log.jsonl"
 
@@ -98,7 +98,8 @@ def route_note(path, decision, project=None, tags=None, cites=None):
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / path.name
     dest.write_text(serialize(meta, body))
-    path.unlink()
+    if dest.resolve() != path.resolve():
+        path.unlink()
     _log(meta.get("id", path.name), decision, meta.get("project"))
     return dest
 

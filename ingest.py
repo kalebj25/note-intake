@@ -1,28 +1,18 @@
 """
 ingest.py - ERGO ingest module.
 
-One job: pull new note files out of the iCloud capture folder (where the iOS
-Shortcut drops them) and move them into the local inbox. After this runs the
-local inbox holds everything, and triage reads a plain local folder - no iCloud
-paths, no placeholder quirks downstream.
+Pulls new note files out of the iCloud capture folder (where the iOS Shortcut
+drops them) and moves them into the local inbox. iCloud files often arrive
+"dataless" - metadata present (non-zero size in ls) but content not yet on
+local disk. Copying those with shutil.move hits fcopyfile and fails with
+EDEADLK, leaving empty files. So we force-download each file (brctl) and copy
+via read/write bytes, deleting the source only after a verified non-empty write.
 
-Zero dependencies - pure standard library.
-
-Contract
---------
-Source: <INGEST_SRC>  - searched recursively for *.md and *.txt
-Dest:   <ERGO>/inbox  - each file is MOVED here (the source drains to empty)
-        A file already present in the dest (by name) is left untouched.
-iCloud placeholders (.name.icloud stubs) are downloaded best-effort; any that
-won't materialize are reported so you can download them once in Finder.
-
-Run
----
-    ERGO=~/ergo INGEST_SRC="<iCloud capture folder>" python3 ingest.py
+Zero dependencies - pure standard library + the `brctl` CLI (ships with macOS).
 """
 
 import os
-import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -36,20 +26,19 @@ SRC = Path(os.path.expanduser(os.getenv(
 EXTS = {".md", ".txt"}
 
 
-def materialize(stub: Path, timeout=8.0):
-    """Best-effort download of an iCloud placeholder. Returns the real path or None."""
-    real = stub.with_name(stub.name[1:-len(".icloud")])  # ".x.txt.icloud" -> "x.txt"
-    try:
-        with open(real, "rb") as f:  # touching the real path asks iCloud to fetch it
-            f.read(1)
-    except Exception:
-        pass
+def materialize(path: Path, timeout=15.0) -> bool:
+    """Force iCloud to pull a file's content to local disk. Returns True if readable."""
+    subprocess.run(["brctl", "download", str(path)],
+                   capture_output=True, check=False)
     deadline = time.time() + timeout
     while time.time() < deadline:
-        if real.exists():
-            return real
-        time.sleep(0.4)
-    return real if real.exists() else None
+        try:
+            with open(path, "rb") as f:
+                f.read(1)          # a real read; raises EDEADLK if still dataless
+            return True
+        except OSError:
+            time.sleep(0.5)
+    return False
 
 
 def main():
@@ -60,26 +49,44 @@ def main():
 
     moved = skipped = pending = 0
 
-    # 1) try to pull down any placeholders first
-    for stub in list(SRC.rglob(".*.icloud")):
-        if materialize(stub) is None:
-            pending += 1
-
-    # 2) move real note files into the local inbox
     for src in sorted(SRC.rglob("*")):
-        if src.is_file() and src.suffix.lower() in EXTS and not src.name.startswith("."):
-            dest = DEST / src.name
-            if dest.exists():
-                skipped += 1
-                continue
-            shutil.move(str(src), str(dest))
+        if not (src.is_file() and src.suffix.lower() in EXTS and not src.name.startswith(".")):
+            continue
+        dest = DEST / src.name
+        if dest.exists():
+            skipped += 1
+            continue
+
+        if not materialize(src):
+            pending += 1
+            print(f"  still dataless, skipped: {src.name}")
+            continue
+
+        try:
+            data = src.read_bytes()
+        except OSError as e:
+            pending += 1
+            print(f"  could not read, skipped: {src.name} ({e})")
+            continue
+
+        if not data:
+            pending += 1
+            print(f"  downloaded but empty, skipped: {src.name}")
+            continue
+
+        dest.write_bytes(data)
+        if dest.stat().st_size == len(data):   # verified write before removing source
+            src.unlink()
             moved += 1
+        else:
+            pending += 1
+            print(f"  write mismatch, source kept: {src.name}")
 
     msg = f"Ingested {moved} note(s) into {DEST}."
     if skipped:
         msg += f" {skipped} already there, left alone."
     if pending:
-        msg += f" {pending} still in iCloud (not downloaded) - open them once in Finder."
+        msg += f" {pending} could not be pulled down - try again shortly."
     print(msg)
 
 
